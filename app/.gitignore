@@ -1,0 +1,53 @@
+# === Android / Gradle ===
+.gradle/
+build/
+**/build/
+local.properties
+*.iml
+*.hprof
+
+# === IntelliJ / Android Studio ===
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+.idea/shelf/
+.idea/deploymentTargetDropDown.xml
+
+# === Log files ===
+*.log
+
+# === OS files ===
+.DS_Store
+Thumbs.db
+
+# === Keystore (IMPORTANT) ===
+*.jks
+*.keystore
+key.properties
+
+# === Generated files ===
+captures/
+output.json
+
+# === APK / AAB ===
+*.apk
+*.ap_
+*.aab
+
+# === Gradle Wrapper ===
+!gradle-wrapper.jar
+
+# === Kotlin ===
+*.kotlin_module
+
+# === NDK ===
+obj/
+
+# === Misc ===
+*.orig
+*.rej
+*.swp
+*.swo

@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <androidx.camera.view.PreviewView
+        android:id="@+id/previewView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <com.example.feederbitealarm.RoiOverlayView
+        android:id="@+id/roiOverlay"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/transparent" />
+
+    <!-- Butoane zoom -->
+    <LinearLayout
+        android:orientation="horizontal"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:padding="16dp"
+        android:layout_gravity="bottom|center_horizontal">
+
+        <Button
+            android:id="@+id/btnZoom1x"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="1x" />
+
+        <Button
+            android:id="@+id/btnZoom3x"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="3x"
+            android:layout_marginStart="16dp" />
+
+    </LinearLayout>
+
+</FrameLayout>
