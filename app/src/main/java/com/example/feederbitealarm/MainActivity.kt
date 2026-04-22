@@ -2,33 +2,37 @@ package com.example.feederbitealarm
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Canvas
-import android.graphics.Color
-import android.graphics.Paint
 import android.graphics.Rect
 import android.os.Bundle
 import android.view.MotionEvent
-import android.view.View
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
+import androidx.camera.core.Camera
 import androidx.camera.core.CameraSelector
-import androidx.camera.core.FocusMeteringAction
-import androidx.camera.core.MeteringPoint
+import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.Preview
 import androidx.camera.lifecycle.ProcessCameraProvider
-import androidx.camera.view.PreviewView
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
-import androidx.camera.core.ImageAnalysis
+import androidx.camera.view.PreviewView
 
 class MainActivity : AppCompatActivity() {
 
     private lateinit var previewView: PreviewView
     private lateinit var roiOverlay: RoiOverlayView
-    private lateinit var btnZoom1x: Button
-    private lateinit var btnZoom3x: Button
+    private lateinit var tipOverlay: TipOverlayView
+    private lateinit var debugOverlay: DebugOverlayView
 
-    private var camera: androidx.camera.core.Camera? = null
+    private lateinit var btnS1: Button
+    private lateinit var btnS2: Button
+    private lateinit var btnS3: Button
+    private lateinit var btnS4: Button
+
+    private lateinit var btnZoom1: Button
+    private lateinit var btnZoom3: Button
+
+    private lateinit var frameAnalyzer: FrameAnalyzer
+    private var camera: Camera? = null
 
     private val cameraPermission = Manifest.permission.CAMERA
     private val requestCode = 1001
@@ -39,53 +43,71 @@ class MainActivity : AppCompatActivity() {
 
         previewView = findViewById(R.id.previewView)
         roiOverlay = findViewById(R.id.roiOverlay)
-        btnZoom1x = findViewById(R.id.btnZoom1x)
-        btnZoom3x = findViewById(R.id.btnZoom3x)
+        tipOverlay = findViewById(R.id.tipOverlay)
+        debugOverlay = findViewById(R.id.debugOverlay)
 
-        // ROI mutabil continuu
-        roiOverlay.setOnTouchListener { v, event ->
+        btnS1 = findViewById(R.id.btnS1)
+        btnS2 = findViewById(R.id.btnS2)
+        btnS3 = findViewById(R.id.btnS3)
+        btnS4 = findViewById(R.id.btnS4)
 
-            val size = 120
+        btnZoom1 = findViewById(R.id.btnZoom1)
+        btnZoom3 = findViewById(R.id.btnZoom3)
 
-            when (event.action) {
+        frameAnalyzer = FrameAnalyzer(
+            previewView = previewView,
+            getRoi = { roiOverlay.roiRect },
+            onMotionDetected = {
+                tipOverlay.updateTipData(emptyList(), null, null, true)
+            },
+            onTipData = { points, box, centroid, flash ->
+                tipOverlay.updateTipData(points, box, centroid, flash)
 
-                MotionEvent.ACTION_DOWN,
-                MotionEvent.ACTION_MOVE -> {
-
-                    val left = (event.x - size / 2).toInt()
-                    val top = (event.y - size / 2).toInt()
-                    val right = (event.x + size / 2).toInt()
-                    val bottom = (event.y + size / 2).toInt()
-
-                    roiOverlay.roiRect = Rect(left, top, right, bottom)
-                    roiOverlay.invalidate()
-
-                    if (event.action == MotionEvent.ACTION_DOWN) {
-                        lockFocusOnRoi()
-                    }
+                frameAnalyzer.getReferencePoints()?.let { ref ->
+                    tipOverlay.updateReference(ref, frameAnalyzer.getBorderRect())
                 }
-
-                MotionEvent.ACTION_UP -> {
-                    v.performClick()
-                }
+            },
+            onDebugData = { overlap, borderHits, count, sens ->
+                debugOverlay.update(overlap, borderHits, count, sens)
             }
+        )
 
+        setupSensitivityButtons()
+        setupZoomButtons()
+        setupTapListener()
+
+        if (hasCameraPermission()) startCamera()
+        else requestCameraPermission()
+    }
+
+    private fun setupSensitivityButtons() {
+        btnS1.setOnClickListener { frameAnalyzer.sensitivity = Sensitivity.S1 }
+        btnS2.setOnClickListener { frameAnalyzer.sensitivity = Sensitivity.S2 }
+        btnS3.setOnClickListener { frameAnalyzer.sensitivity = Sensitivity.S3 }
+        btnS4.setOnClickListener { frameAnalyzer.sensitivity = Sensitivity.S4 }
+    }
+
+    private fun setupZoomButtons() {
+        btnZoom1.setOnClickListener { camera?.cameraControl?.setZoomRatio(1.0f) }
+        btnZoom3.setOnClickListener { camera?.cameraControl?.setZoomRatio(3.0f) }
+    }
+
+    private fun setupTapListener() {
+        previewView.setOnTouchListener { _, event ->
+            if (event.action == MotionEvent.ACTION_UP) {
+
+                val size = 40
+                val left = (event.x - size).toInt()
+                val top = (event.y - size).toInt()
+                val right = (event.x + size).toInt()
+                val bottom = (event.y + size).toInt()
+
+                roiOverlay.roiRect = Rect(left, top, right, bottom)
+                roiOverlay.invalidate()
+
+                frameAnalyzer.resetAll()
+            }
             true
-        }
-
-        btnZoom1x.setOnClickListener { setZoom1x() }
-        btnZoom3x.setOnClickListener { setZoom3x() }
-
-        if (ContextCompat.checkSelfPermission(this, cameraPermission)
-            != PackageManager.PERMISSION_GRANTED) {
-
-            ActivityCompat.requestPermissions(
-                this,
-                arrayOf(cameraPermission),
-                requestCode
-            )
-        } else {
-            startCamera()
         }
     }
 
@@ -99,111 +121,49 @@ class MainActivity : AppCompatActivity() {
                 it.setSurfaceProvider(previewView.surfaceProvider)
             }
 
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
-
-            val imageAnalysis = ImageAnalysis.Builder()
+            val analysis = ImageAnalysis.Builder()
                 .setBackpressureStrategy(ImageAnalysis.STRATEGY_KEEP_ONLY_LATEST)
                 .build()
-                .also { analysis ->
-                    analysis.setAnalyzer(
+                .also {
+                    it.setAnalyzer(
                         ContextCompat.getMainExecutor(this),
-                        FrameAnalyzer(
-                            previewView = previewView,
-                            getRoi = { roiOverlay.roiRect },
-                            onMotionDetected = { onMotionDetected() },
-                            sensitivityPx = 5
-                        )
+                        frameAnalyzer
                     )
                 }
 
-            try {
-                cameraProvider.unbindAll()
+            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
-                camera = cameraProvider.bindToLifecycle(
-                    this,
-                    cameraSelector,
-                    preview,
-                    imageAnalysis
-                )
-
-                camera?.cameraControl?.setZoomRatio(1.0f)
-
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            cameraProvider.unbindAll()
+            camera = cameraProvider.bindToLifecycle(
+                this,
+                cameraSelector,
+                preview,
+                analysis
+            )
 
         }, ContextCompat.getMainExecutor(this))
     }
 
-    private fun setZoom1x() {
-        camera?.cameraControl?.setZoomRatio(1.0f)
-    }
+    private fun hasCameraPermission(): Boolean =
+        ContextCompat.checkSelfPermission(this, cameraPermission) ==
+                PackageManager.PERMISSION_GRANTED
 
-    private fun setZoom3x() {
-        camera?.cameraControl?.setZoomRatio(3.0f)
-    }
-
-    private fun getRoiCenterPoint(): MeteringPoint? {
-        val rect = roiOverlay.roiRect ?: return null
-        val factory = previewView.meteringPointFactory
-        return factory.createPoint(rect.exactCenterX(), rect.exactCenterY())
-    }
-
-    private fun lockFocusOnRoi() {
-        val point = getRoiCenterPoint() ?: return
-
-        val action = FocusMeteringAction.Builder(
-            point,
-            FocusMeteringAction.FLAG_AF
-        )
-            .disableAutoCancel()
-            .build()
-
-        camera?.cameraControl?.startFocusAndMetering(action)
+    private fun requestCameraPermission() {
+        ActivityCompat.requestPermissions(this, arrayOf(cameraPermission), requestCode)
     }
 
     override fun onRequestPermissionsResult(
         requestCode: Int,
-        permissions: Array<out String>,
+        permissions: Array<String>,
         grantResults: IntArray
     ) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
 
         if (requestCode == this.requestCode &&
             grantResults.isNotEmpty() &&
-            grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-
+            grantResults[0] == PackageManager.PERMISSION_GRANTED
+        ) {
             startCamera()
         }
-    }
-
-    private fun onMotionDetected() {
-        runOnUiThread {
-            println("MISCARE DETECTATA")
-        }
-    }
-}
-
-/**
- * View custom pentru desenarea ROI-ului
- */
-class RoiOverlayView(context: android.content.Context, attrs: android.util.AttributeSet) :
-    View(context, attrs) {
-
-    var roiRect: Rect? = null
-    private val paint = Paint().apply {
-        color = Color.RED
-        style = Paint.Style.STROKE
-        strokeWidth = 5f
-    }
-
-    override fun onDraw(canvas: Canvas) {
-        super.onDraw(canvas)
-        roiRect?.let { canvas.drawRect(it, paint) }
-    }
-
-    override fun performClick(): Boolean {
-        super.performClick()
-        return true
     }
 }

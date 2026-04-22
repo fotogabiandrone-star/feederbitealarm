@@ -1,6 +1,8 @@
 package com.example.feederbitealarm
 
+import android.graphics.PointF
 import android.graphics.Rect
+import android.graphics.RectF
 import androidx.camera.core.ImageAnalysis
 import androidx.camera.core.ImageProxy
 import androidx.camera.view.PreviewView
@@ -8,29 +10,58 @@ import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
+enum class Sensitivity(
+    val minOverlap: Float,
+    val borderHitThreshold: Int
+) {
+    S1(0.50f, 3),
+    S2(0.65f, 2),
+    S3(0.75f, 2),
+    S4(0.85f, 1),
+    S5(0.92f, 1)
+}
+
 class FrameAnalyzer(
     private val previewView: PreviewView,
     private val getRoi: () -> Rect?,
     private val onMotionDetected: () -> Unit,
-    private val sensitivityPx: Int = 5
+    private val onTipData: (List<PointF>, RectF?, PointF?, Boolean) -> Unit,
+    private val onDebugData: (Float, Int, Int, Sensitivity) -> Unit
 ) : ImageAnalysis.Analyzer {
 
-    private var lastDominantColumn: Int? = null
+    var sensitivity: Sensitivity = Sensitivity.S3
 
-    // Interval HSV detectat automat din vârf
     private var hsvMin: FloatArray? = null
     private var hsvMax: FloatArray? = null
 
+    private var referencePoints: List<PointF>? = null
+    private var referenceBounds: RectF? = null
+    private var borderRect: RectF? = null
+
+    private var lastDetectedPoints: List<PointF> = emptyList()
+
+    private var autoSetPending = false
+
+    fun getReferencePoints(): List<PointF>? = referencePoints
+    fun getBorderRect(): RectF? = borderRect
+
+    fun resetAll() {
+        hsvMin = null
+        hsvMax = null
+        referencePoints = null
+        referenceBounds = null
+        borderRect = null
+        lastDetectedPoints = emptyList()
+        autoSetPending = true
+    }
     override fun analyze(image: ImageProxy) {
         val roiView = getRoi() ?: run {
             image.close()
             return
         }
 
-        // 1. Mapare ROI (din View) în coordonate imagine
         val roi = mapRoiToImageCoordinates(roiView, image.width, image.height)
 
-        // 2. Plane-uri YUV
         val yPlane = image.planes[0]
         val uPlane = image.planes[1]
         val vPlane = image.planes[2]
@@ -48,7 +79,7 @@ class FrameAnalyzer(
         val vRowStride = vPlane.rowStride
         val vPixelStride = vPlane.pixelStride
 
-        // 3. Detectăm intervalul HSV al vârfului (o singură dată)
+        // Dacă nu avem HSV, îl detectăm acum
         if (hsvMin == null || hsvMax == null) {
             detectHsvRange(image, roi)
         }
@@ -60,14 +91,77 @@ class FrameAnalyzer(
             return
         }
 
-        // 4. Calculăm coloana dominantă în ROI
-        val columnScores = IntArray(roi.width())
+        val roiWidth = roi.width()
+        val roiHeight = roi.height()
 
-        for (y in roi.top until roi.bottom) {
-            for (x in roi.left until roi.right) {
+        if (roiWidth < 3 || roiHeight < 3) {
+            onTipData(emptyList(), null, null, false)
+            onDebugData(0f, 0, 0, sensitivity)
+            image.close()
+            return
+        }
 
-                val yIndex = y * yRowStride + x * yPixelStride
-                val uvIndex = (y / 2) * uRowStride + (x / 2) * uPixelStride
+        // extragem luminanța Y
+        val yLuma = Array(roiHeight) { IntArray(roiWidth) }
+
+        for (yy in 0 until roiHeight) {
+            val yImg = roi.top + yy
+            for (xx in 0 until roiWidth) {
+                val xImg = roi.left + xx
+
+                val yIndex = yImg * yRowStride + xImg * yPixelStride
+                if (yIndex >= yBuffer.limit()) continue
+
+                yLuma[yy][xx] = (yBuffer.get(yIndex).toInt() and 0xFF)
+            }
+        }
+
+        // Sobel
+        val sobelMask = Array(roiHeight) { BooleanArray(roiWidth) }
+        val sobelThreshold = 60
+
+        for (yy in 1 until roiHeight - 1) {
+            for (xx in 1 until roiWidth - 1) {
+
+                val p00 = yLuma[yy - 1][xx - 1]
+                val p01 = yLuma[yy - 1][xx]
+                val p02 = yLuma[yy - 1][xx + 1]
+
+                val p10 = yLuma[yy][xx - 1]
+                val p11 = yLuma[yy][xx]
+                val p12 = yLuma[yy][xx + 1]
+
+                val p20 = yLuma[yy + 1][xx - 1]
+                val p21 = yLuma[yy + 1][xx]
+                val p22 = yLuma[yy + 1][xx + 1]
+
+                val gx =
+                    (-1 * p00) + (1 * p02) +
+                            (-2 * p10) + (2 * p12) +
+                            (-1 * p20) + (1 * p22)
+
+                val gy =
+                    (-1 * p00) + (-2 * p01) + (-1 * p02) +
+                            (1 * p20) + (2 * p21) + (1 * p22)
+
+                val mag = abs(gx) + abs(gy)
+
+                if (mag > sobelThreshold) {
+                    sobelMask[yy][xx] = true
+                }
+            }
+        }
+
+        val detectedPoints = mutableListOf<PointF>()
+        for (yy in 1 until roiHeight - 1) {
+            val yImg = roi.top + yy
+            for (xx in 1 until roiWidth - 1) {
+                if (!sobelMask[yy][xx]) continue
+
+                val xImg = roi.left + xx
+
+                val yIndex = yImg * yRowStride + xImg * yPixelStride
+                val uvIndex = (yImg / 2) * uRowStride + (xImg / 2) * uPixelStride
 
                 if (yIndex >= yBuffer.limit() ||
                     uvIndex >= uBuffer.limit() ||
@@ -78,50 +172,123 @@ class FrameAnalyzer(
                 val U = (uBuffer.get(uvIndex).toInt() and 0xFF) - 128
                 val V = (vBuffer.get(uvIndex).toInt() and 0xFF) - 128
 
-                // YUV → RGB
                 val r = (Y + 1.370705f * V).toInt().coerceIn(0, 255)
                 val g = (Y - 0.337633f * U - 0.698001f * V).toInt().coerceIn(0, 255)
                 val b = (Y + 1.732446f * U).toInt().coerceIn(0, 255)
 
-                // RGB → HSV
                 val hsv = rgbToHsv(r, g, b)
 
-                if (isInRange(hsv, minHSV, maxHSV)) {
-                    val colIndex = x - roi.left
-                    columnScores[colIndex]++
-                }
+                if (!isInRange(hsv, minHSV, maxHSV)) continue
+
+                val viewPoint = mapImageToViewCoordinates(
+                    xImg.toFloat(),
+                    yImg.toFloat(),
+                    image.width,
+                    image.height
+                )
+                detectedPoints.add(viewPoint)
             }
         }
 
-        // 5. Găsim coloana dominantă
-        var maxScore = 0
-        var dominantColIndex = -1
+        // 🔥 LIMITARE LA RAMĂ
+        if (referenceBounds != null && borderRect != null) {
+            val filtered = detectedPoints.filter { p ->
+                borderRect!!.contains(p.x, p.y)
+            }
+            detectedPoints.clear()
+            detectedPoints.addAll(filtered)
+        }
 
-        for (i in columnScores.indices) {
-            if (columnScores[i] > maxScore) {
-                maxScore = columnScores[i]
-                dominantColIndex = i
+        lastDetectedPoints = detectedPoints.toList()
+
+        // 🔥 AUTO-SET INSULA DUPĂ TAP
+        if (autoSetPending && detectedPoints.size > 30) {
+            referencePoints = detectedPoints.toList()
+
+            val minX = detectedPoints.minOf { it.x }
+            val maxX = detectedPoints.maxOf { it.x }
+            val minY = detectedPoints.minOf { it.y }
+            val maxY = detectedPoints.maxOf { it.y }
+
+            referenceBounds = RectF(minX, minY, maxX, maxY)
+
+            val margin = 8f
+            borderRect = RectF(
+                minX - margin,
+                minY - margin,
+                maxX + margin,
+                maxY + margin
+            )
+
+            autoSetPending = false
+        }
+
+        if (detectedPoints.isEmpty()) {
+            onTipData(emptyList(), null, null, false)
+            onDebugData(0f, 0, 0, sensitivity)
+            image.close()
+            return
+        }
+
+        val minX = detectedPoints.minOf { it.x }
+        val maxX = detectedPoints.maxOf { it.x }
+        val minY = detectedPoints.minOf { it.y }
+        val maxY = detectedPoints.maxOf { it.y }
+
+        val boundingBox = RectF(minX, minY, maxX, maxY)
+
+        val cx = detectedPoints.sumOf { it.x.toDouble() } / detectedPoints.size
+        val cy = detectedPoints.sumOf { it.y.toDouble() } / detectedPoints.size
+        val centroid = PointF(cx.toFloat(), cy.toFloat())
+
+        onTipData(detectedPoints, boundingBox, centroid, false)
+
+        val refPoints = referencePoints
+        val refBounds = referenceBounds
+        val border = borderRect
+
+        if (refPoints == null || refBounds == null || border == null) {
+            onDebugData(0f, 0, detectedPoints.size, sensitivity)
+            image.close()
+            return
+        }
+
+        var overlapCount = 0
+        val maxDist = 3f
+
+        for (p in detectedPoints) {
+            if (refPoints.any { rp ->
+                    val dx = rp.x - p.x
+                    val dy = rp.y - p.y
+                    dx * dx + dy * dy <= maxDist * maxDist
+                }) {
+                overlapCount++
             }
         }
 
-        if (dominantColIndex != -1) {
-            val currentColumn = roi.left + dominantColIndex
-            val last = lastDominantColumn
+        val overlapRatio =
+            if (refPoints.isNotEmpty()) overlapCount.toFloat() / refPoints.size.toFloat()
+            else 0f
 
-            if (last != null) {
-                val delta = abs(currentColumn - last)
-                if (delta >= sensitivityPx) {
-                    onMotionDetected()
-                }
+        var borderHits = 0
+        for (p in detectedPoints) {
+            if (border.contains(p.x, p.y) && !refBounds.contains(p.x, p.y)) {
+                borderHits++
             }
+        }
 
-            lastDominantColumn = currentColumn
+        onDebugData(overlapRatio, borderHits, detectedPoints.size, sensitivity)
+
+        val overlapTooLow = overlapRatio < sensitivity.minOverlap
+        val borderTooMuch = borderHits >= sensitivity.borderHitThreshold
+
+        if (overlapTooLow || borderTooMuch) {
+            onMotionDetected()
         }
 
         image.close()
     }
 
-    // === Mapare ROI View → coordonate imagine (FILL_CENTER corect) ===
     private fun mapRoiToImageCoordinates(roi: Rect, imageWidth: Int, imageHeight: Int): Rect {
         val viewWidth = previewView.width.toFloat()
         val viewHeight = previewView.height.toFloat()
@@ -134,13 +301,11 @@ class FrameAnalyzer(
         val offsetY: Float
 
         if (imageRatio > viewRatio) {
-            // imaginea e mai lată → se decupează pe X
             scale = viewHeight / imageHeight
             val scaledWidth = imageWidth * scale
             offsetX = (scaledWidth - viewWidth) / 2f
             offsetY = 0f
         } else {
-            // imaginea e mai înaltă → se decupează pe Y
             scale = viewWidth / imageWidth
             val scaledHeight = imageHeight * scale
             offsetY = (scaledHeight - viewHeight) / 2f
@@ -155,7 +320,37 @@ class FrameAnalyzer(
         return Rect(left, top, right, bottom)
     }
 
-    // === Detectăm automat intervalul HSV al vârfului din ROI ===
+    private fun mapImageToViewCoordinates(
+        x: Float,
+        y: Float,
+        imageWidth: Int,
+        imageHeight: Int
+    ): PointF {
+        val viewWidth = previewView.width.toFloat()
+        val viewHeight = previewView.height.toFloat()
+
+        val imageRatio = imageWidth.toFloat() / imageHeight
+        val viewRatio = viewWidth / viewHeight
+
+        val scale: Float
+        val offsetX: Float
+        val offsetY: Float
+
+        return if (imageRatio > viewRatio) {
+            scale = viewHeight / imageHeight
+            val scaledWidth = imageWidth * scale
+            offsetX = (scaledWidth - viewWidth) / 2f
+            offsetY = 0f
+            PointF(x * scale - offsetX, y * scale - offsetY)
+        } else {
+            scale = viewWidth / imageWidth
+            val scaledHeight = imageHeight * scale
+            offsetY = (scaledHeight - viewHeight) / 2f
+            offsetX = 0f
+            PointF(x * scale - offsetX, y * scale - offsetY)
+        }
+    }
+
     private fun detectHsvRange(image: ImageProxy, roi: Rect) {
         val samplePixels = mutableListOf<FloatArray>()
 
