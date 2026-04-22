@@ -41,6 +41,9 @@ class FrameAnalyzer(
     private var lastDetectedPoints: List<PointF> = emptyList()
 
     private var autoSetPending = false
+    fun requestAutoSet() {
+        autoSetPending = true
+    }
 
     fun getReferencePoints(): List<PointF>? = referencePoints
     fun getBorderRect(): RectF? = borderRect
@@ -79,7 +82,7 @@ class FrameAnalyzer(
         val vRowStride = vPlane.rowStride
         val vPixelStride = vPlane.pixelStride
 
-        // Dacă nu avem HSV, îl detectăm acum
+        // Detectăm HSV dacă nu avem încă
         if (hsvMin == null || hsvMax == null) {
             detectHsvRange(image, roi)
         }
@@ -203,6 +206,7 @@ class FrameAnalyzer(
 
         // 🔥 AUTO-SET INSULA DUPĂ TAP
         if (autoSetPending && detectedPoints.size > 30) {
+
             referencePoints = detectedPoints.toList()
 
             val minX = detectedPoints.minOf { it.x }

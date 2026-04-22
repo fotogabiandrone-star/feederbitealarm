@@ -22,7 +22,7 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- DEBUG OVERLAY (DESENAT) -->
+    <!-- DEBUG OVERLAY -->
     <com.example.feederbitealarm.DebugOverlayView
         android:id="@+id/debugOverlay"
         android:layout_width="match_parent"
@@ -33,9 +33,9 @@
         android:id="@+id/sensitivityButtons"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_gravity="bottom|center_horizontal"
         android:orientation="horizontal"
-        android:padding="12dp"
-        android:layout_gravity="bottom|center_horizontal">
+        android:padding="12dp">
 
         <Button
             android:id="@+id/btnS1"
@@ -47,33 +47,32 @@
             android:id="@+id/btnS2"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="S2"
-            android:layout_marginStart="8dp" />
+            android:layout_marginStart="8dp"
+            android:text="S2" />
 
         <Button
             android:id="@+id/btnS3"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="S3"
-            android:layout_marginStart="8dp" />
+            android:layout_marginStart="8dp"
+            android:text="S3" />
 
         <Button
             android:id="@+id/btnS4"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="S4"
-            android:layout_marginStart="8dp" />
+            android:layout_marginStart="8dp"
+            android:text="S4" />
     </LinearLayout>
 
-    <!-- BUTOANE ZOOM -->
     <!-- BUTOANE ZOOM -->
     <LinearLayout
         android:id="@+id/zoomButtons"
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
         android:orientation="horizontal"
-        android:padding="12dp"
-        android:layout_gravity="top|end">
+        android:padding="12dp">
 
         <Button
             android:id="@+id/btnZoom1"
@@ -85,8 +84,31 @@
             android:id="@+id/btnZoom3"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:text="3×"
-            android:layout_marginStart="8dp" />
+            android:layout_marginStart="8dp"
+            android:text="3×" />
+
+        <Button
+            android:id="@+id/btnZoom6"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="6×" />
+
+        <Button
+            android:id="@+id/btnZoom10"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="8dp"
+            android:text="10×" />
     </LinearLayout>
+
+    <!-- BUTON SET TIP -->
+    <Button
+        android:id="@+id/btnSetTip"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="SET TIP"
+        android:layout_gravity="bottom|end"
+        android:layout_margin="20dp" />
 
 </FrameLayout>

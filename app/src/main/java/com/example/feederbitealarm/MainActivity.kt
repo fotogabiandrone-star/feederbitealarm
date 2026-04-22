@@ -2,15 +2,11 @@ package com.example.feederbitealarm
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.graphics.Rect
 import android.os.Bundle
 import android.view.MotionEvent
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
-import androidx.camera.core.Camera
-import androidx.camera.core.CameraSelector
-import androidx.camera.core.ImageAnalysis
-import androidx.camera.core.Preview
+import androidx.camera.core.*
 import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
@@ -30,6 +26,10 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var btnZoom1: Button
     private lateinit var btnZoom3: Button
+    private lateinit var btnZoom6: Button
+    private lateinit var btnZoom10: Button
+
+    private lateinit var btnSetTip: Button
 
     private lateinit var frameAnalyzer: FrameAnalyzer
     private var camera: Camera? = null
@@ -53,10 +53,14 @@ class MainActivity : AppCompatActivity() {
 
         btnZoom1 = findViewById(R.id.btnZoom1)
         btnZoom3 = findViewById(R.id.btnZoom3)
+        btnZoom6 = findViewById(R.id.btnZoom6)
+        btnZoom10 = findViewById(R.id.btnZoom10)
+
+        btnSetTip = findViewById(R.id.btnSetTip)
 
         frameAnalyzer = FrameAnalyzer(
             previewView = previewView,
-            getRoi = { roiOverlay.roiRect },
+            getRoi = { roiOverlay.getRoiRect() },
             onMotionDetected = {
                 tipOverlay.updateTipData(emptyList(), null, null, true)
             },
@@ -74,7 +78,8 @@ class MainActivity : AppCompatActivity() {
 
         setupSensitivityButtons()
         setupZoomButtons()
-        setupTapListener()
+        setupTapToFocus()
+        setupSetTipButton()
 
         if (hasCameraPermission()) startCamera()
         else requestCameraPermission()
@@ -88,26 +93,42 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun setupZoomButtons() {
-        btnZoom1.setOnClickListener { camera?.cameraControl?.setZoomRatio(1.0f) }
-        btnZoom3.setOnClickListener { camera?.cameraControl?.setZoomRatio(3.0f) }
+        btnZoom1.setOnClickListener { camera?.cameraControl?.setZoomRatio(1f) }
+        btnZoom3.setOnClickListener { camera?.cameraControl?.setZoomRatio(3f) }
+        btnZoom6.setOnClickListener { camera?.cameraControl?.setZoomRatio(6f) }
+        btnZoom10.setOnClickListener { camera?.cameraControl?.setZoomRatio(10f) }
     }
 
-    private fun setupTapListener() {
+    private fun setupTapToFocus() {
         previewView.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
 
-                val size = 40
-                val left = (event.x - size).toInt()
-                val top = (event.y - size).toInt()
-                val right = (event.x + size).toInt()
-                val bottom = (event.y + size).toInt()
+                previewView.performClick()
 
-                roiOverlay.roiRect = Rect(left, top, right, bottom)
-                roiOverlay.invalidate()
+                val factory = previewView.meteringPointFactory
+                val point = factory.createPoint(event.x, event.y)
 
-                frameAnalyzer.resetAll()
+                val action = FocusMeteringAction.Builder(point).build()
+                camera?.cameraControl?.startFocusAndMetering(action)
             }
             true
+        }
+    }
+
+    private fun setupSetTipButton() {
+        btnSetTip.setOnClickListener {
+
+            val cx = roiOverlay.roiCenterX
+            val cy = roiOverlay.roiCenterY
+
+            val factory = previewView.meteringPointFactory
+            val point = factory.createPoint(cx, cy)
+
+            val action = FocusMeteringAction.Builder(point).build()
+            camera?.cameraControl?.startFocusAndMetering(action)
+
+            frameAnalyzer.resetAll()
+            frameAnalyzer.requestAutoSet()
         }
     }
 
