@@ -3,6 +3,7 @@ package com.example.feederbitealarm
 import android.Manifest
 import android.content.pm.PackageManager
 import android.os.Bundle
+import android.util.Log
 import android.view.MotionEvent
 import android.widget.Button
 import androidx.appcompat.app.AppCompatActivity
@@ -96,7 +97,9 @@ class MainActivity : AppCompatActivity() {
         btnZoom1.setOnClickListener { camera?.cameraControl?.setZoomRatio(1f) }
         btnZoom3.setOnClickListener { camera?.cameraControl?.setZoomRatio(3f) }
         btnZoom6.setOnClickListener { camera?.cameraControl?.setZoomRatio(6f) }
-        btnZoom10.setOnClickListener { camera?.cameraControl?.setZoomRatio(10f) }
+        btnZoom10.setOnClickListener { camera?.cameraControl?.setZoomRatio(8f) }
+
+
     }
 
     private fun setupTapToFocus() {
@@ -161,6 +164,10 @@ class MainActivity : AppCompatActivity() {
                 preview,
                 analysis
             )
+
+            camera?.cameraInfo?.zoomState?.observe(this) { state ->
+                Log.d("ZOOM", "max zoom = ${state.maxZoomRatio}")
+            }
 
         }, ContextCompat.getMainExecutor(this))
     }

@@ -18,10 +18,14 @@ class DebugOverlayView @JvmOverloads constructor(
     private var sensitivity: Sensitivity = Sensitivity.S3
 
     private val paint = Paint().apply {
-        color = Color.WHITE
-        textSize = 62f
+        color = Color.rgb(180, 20, 20)   // roșu închis
+        textSize = 80f
         isAntiAlias = true
     }
+    private val bgPaint = Paint().apply {
+        color = Color.argb(140, 255, 255, 255)   // negru semi-transparent
+    }
+
 
     fun update(
         overlap: Float,
@@ -39,10 +43,20 @@ class DebugOverlayView @JvmOverloads constructor(
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
 
-        var y = 50f
-        canvas.drawText("Overlap: ${(overlap * 100).toInt()}%", 20f, y, paint); y += 45f
-        canvas.drawText("Border hits: $borderHits", 20f, y, paint); y += 45f
-        canvas.drawText("Points: $count", 20f, y, paint); y += 45f
-        canvas.drawText("Sens: ${sensitivity.name}", 20f, y, paint)
+        // dimensiunea blocului de text
+        val left = 10f
+        val top = 10f
+        val right = 420f
+        val bottom = 10f + 4 * 45f + 20f   // 4 linii + padding
+
+        // fundal semitransparent
+        canvas.drawRect(left, top, right, bottom, bgPaint)
+
+        // text roșu închis
+        var y = top + 45f
+        canvas.drawText("Overlap: ${(overlap * 100).toInt()}%", left + 10f, y, paint); y += 80f
+        canvas.drawText("Border hits: $borderHits", left + 10f, y, paint); y += 80f
+        canvas.drawText("Points: $count", left + 10f, y, paint); y += 80f
+        canvas.drawText("Sens: ${sensitivity.name}", left + 10f, y, paint)
     }
 }
