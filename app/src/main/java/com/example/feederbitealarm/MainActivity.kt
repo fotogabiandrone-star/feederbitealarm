@@ -12,7 +12,13 @@ import androidx.camera.lifecycle.ProcessCameraProvider
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.camera.view.PreviewView
+import androidx.camera.camera2.interop.Camera2CameraInfo
+import androidx.camera.camera2.interop.ExperimentalCamera2Interop
+import androidx.camera.core.CameraSelector
+import androidx.camera.core.ImageAnalysis
+import androidx.camera.core.Preview
 
+@OptIn(androidx.camera.camera2.interop.ExperimentalCamera2Interop::class)
 class MainActivity : AppCompatActivity() {
 
     private lateinit var previewView: PreviewView
@@ -41,6 +47,7 @@ class MainActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
+        debugListCameras()
 
         previewView = findViewById(R.id.previewView)
         roiOverlay = findViewById(R.id.roiOverlay)
@@ -63,16 +70,14 @@ class MainActivity : AppCompatActivity() {
             previewView = previewView,
             getRoi = { roiOverlay.getRoiRect() },
             onMotionDetected = {
+                // doar flash pe overlay când detectăm mișcare
                 tipOverlay.updateTipData(emptyList(), null, null, true)
             },
-            onTipData = { points, box, centroid, flash ->
-                tipOverlay.updateTipData(points, box, centroid, flash)
-
-                frameAnalyzer.getReferencePoints()?.let { ref ->
-                    tipOverlay.updateReference(ref, frameAnalyzer.getBorderRect())
-                }
+            onTipData = { _, _, _, _ ->
+                // nu mai desenăm nimic (fără flood-fill, fără centroid, fără box)
             },
             onDebugData = { overlap, borderHits, count, sens ->
+                // overlap și borderHits nu mai au sens, dar folosim count ca "energie"
                 debugOverlay.update(overlap, borderHits, count, sens)
             }
         )
@@ -98,14 +103,11 @@ class MainActivity : AppCompatActivity() {
         btnZoom3.setOnClickListener { camera?.cameraControl?.setZoomRatio(3f) }
         btnZoom6.setOnClickListener { camera?.cameraControl?.setZoomRatio(6f) }
         btnZoom10.setOnClickListener { camera?.cameraControl?.setZoomRatio(8f) }
-
-
     }
 
     private fun setupTapToFocus() {
         previewView.setOnTouchListener { _, event ->
             if (event.action == MotionEvent.ACTION_UP) {
-
                 previewView.performClick()
 
                 val factory = previewView.meteringPointFactory
@@ -120,7 +122,6 @@ class MainActivity : AppCompatActivity() {
 
     private fun setupSetTipButton() {
         btnSetTip.setOnClickListener {
-
             val cx = roiOverlay.roiCenterX
             val cy = roiOverlay.roiCenterY
 
@@ -129,17 +130,87 @@ class MainActivity : AppCompatActivity() {
 
             val action = FocusMeteringAction.Builder(point).build()
             camera?.cameraControl?.startFocusAndMetering(action)
-
-            frameAnalyzer.resetAll()
-            frameAnalyzer.requestAutoSet()
+            // în varianta B nu mai avem resetAll / requestAutoSet
         }
     }
 
+    private fun debugListCameras() {
+        val cm = getSystemService(android.hardware.camera2.CameraManager::class.java)
+
+        for (id in cm.cameraIdList) {
+            val chars = cm.getCameraCharacteristics(id)
+
+            val facing = when (chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)) {
+                android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK -> "BACK"
+                android.hardware.camera2.CameraCharacteristics.LENS_FACING_FRONT -> "FRONT"
+                else -> "UNKNOWN"
+            }
+
+            val focals = chars.get(
+                android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+            )?.joinToString(", ")
+
+            val apertures = chars.get(
+                android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES
+            )?.joinToString(", ")
+
+            val capabilities = chars.get(
+                android.hardware.camera2.CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES
+            )?.joinToString(", ")
+
+            val configs = chars.get(
+                android.hardware.camera2.CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP
+            )
+
+            val yuvSizes = configs
+                ?.getOutputSizes(android.graphics.ImageFormat.YUV_420_888)
+                ?.joinToString { "${it.width}x${it.height}" }
+
+            Log.e("CAM_DEBUG", "----------------------------------------")
+            Log.e("CAM_DEBUG", "Camera ID: $id")
+            Log.e("CAM_DEBUG", "Facing: $facing")
+            Log.e("CAM_DEBUG", "Focal lengths: $focals")
+            Log.e("CAM_DEBUG", "Apertures: $apertures")
+            Log.e("CAM_DEBUG", "Capabilities: $capabilities")
+            Log.e("CAM_DEBUG", "YUV sizes: $yuvSizes")
+        }
+    }
+
+    @androidx.annotation.OptIn(ExperimentalCamera2Interop::class)
     private fun startCamera() {
         val cameraProviderFuture = ProcessCameraProvider.getInstance(this)
 
         cameraProviderFuture.addListener({
             val cameraProvider = cameraProviderFuture.get()
+
+            val cameraManager = getSystemService(android.hardware.camera2.CameraManager::class.java)
+
+            var wideCameraId: String? = null
+
+            for (id in cameraManager.cameraIdList) {
+                val chars = cameraManager.getCameraCharacteristics(id)
+                val facing = chars.get(android.hardware.camera2.CameraCharacteristics.LENS_FACING)
+
+                if (facing == android.hardware.camera2.CameraCharacteristics.LENS_FACING_BACK) {
+                    val focals = chars.get(
+                        android.hardware.camera2.CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS
+                    ) ?: continue
+
+                    if (focals.any { it == 5.4f }) {
+                        wideCameraId = id
+                        break
+                    }
+                }
+            }
+
+            val cameraSelector = CameraSelector.Builder()
+                .addCameraFilter { infos ->
+                    infos.filter { info ->
+                        val cam2 = Camera2CameraInfo.from(info)
+                        cam2.cameraId == wideCameraId
+                    }
+                }
+                .build()
 
             val preview = Preview.Builder().build().also {
                 it.setSurfaceProvider(previewView.surfaceProvider)
@@ -154,8 +225,6 @@ class MainActivity : AppCompatActivity() {
                         frameAnalyzer
                     )
                 }
-
-            val cameraSelector = CameraSelector.DEFAULT_BACK_CAMERA
 
             cameraProvider.unbindAll()
             camera = cameraProvider.bindToLifecycle(
